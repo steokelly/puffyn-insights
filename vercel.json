@@ -1,1 +1,1 @@
-: { "crons": [ { "path": "/api/check-feed", "schedule": "0 8 * * *" } ] }
+{ "crons": [ { "path": "/api/check-feed", "schedule": "0 8 * * *" } ] }
