@@ -9,12 +9,22 @@ const APPLE_PODCAST_ID = '794389685';
 const PODCAST_NAME = 'Inside Politics (Irish Times)';
 
 export async function GET(request) {
-  // Simple shared-secret check so this endpoint can't be triggered by
-  // random internet traffic and run up transcription/AI costs later.
-  // For now it only touches the RSS feed (free), but we set the habit early.
+  // Two ways to authenticate this endpoint:
+  // 1. Vercel's own Cron system automatically sends "Authorization: Bearer <CRON_SECRET>"
+  //    when it triggers this route on a schedule. This is the standard, recommended
+  //    way to secure Vercel cron endpoints and requires no secret in any URL or file.
+  // 2. A manual "?secret=..." query param, kept only so we can trigger this by hand
+  //    from a browser for testing, using the CHECK_FEED_SECRET value.
   const { searchParams } = new URL(request.url);
-  const providedSecret = searchParams.get('secret');
-  if (!process.env.CHECK_FEED_SECRET || providedSecret !== process.env.CHECK_FEED_SECRET) {
+  const providedQuerySecret = searchParams.get('secret');
+  const authHeader = request.headers.get('authorization');
+
+  const isValidCronRequest =
+    process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  const isValidManualRequest =
+    process.env.CHECK_FEED_SECRET && providedQuerySecret === process.env.CHECK_FEED_SECRET;
+
+  if (!isValidCronRequest && !isValidManualRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
