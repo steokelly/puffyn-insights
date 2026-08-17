@@ -106,7 +106,8 @@ export async function GET(request) {
     }
 
     const claudeData = await claudeRes.json();
-    const rawText = claudeData?.content?.[0]?.text || '';
+    const textBlock = claudeData?.content?.find((block) => block.type === 'text');
+    const rawText = textBlock?.text || '';
 
     let parsed;
     try {
