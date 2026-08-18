@@ -4,7 +4,7 @@ export const maxDuration = 60;
 
 // Only insights scoring 85+ get content drafted — per the brief's thresholds,
 // this is the "develop into potential content" tier.
-const CONTENT_THRESHOLD = 85;
+const CONTENT_THRESHOLD = 70;
 
 const CONTENT_SYSTEM_PROMPT = `You write short-form social content for Puffyn, a media brand for the open-minded covering Ireland, culture, politics, and society. Puffyn's voice: curious, intelligent, progressive, open-minded, thoughtful, accessible, willing to challenge conventional thinking, distinctly human. Never generic-AI-sounding, never rage-baiting, never overstating evidence, never emoji-heavy.
 
