@@ -4,7 +4,7 @@ export const maxDuration = 60;
 
 // Only insights scoring 85+ get content drafted — per the brief's thresholds,
 // this is the "develop into potential content" tier.
-const CONTENT_THRESHOLD = 70;
+const CONTENT_THRESHOLD = 85;
 
 const CONTENT_SYSTEM_PROMPT = `You write short-form social content for Puffyn, a media brand for the open-minded covering Ireland, culture, politics, and society. Puffyn's voice: curious, intelligent, progressive, open-minded, thoughtful, accessible, willing to challenge conventional thinking, distinctly human. Never generic-AI-sounding, never rage-baiting, never overstating evidence, never emoji-heavy.
 
@@ -41,8 +41,6 @@ export async function GET(request) {
 
   const supabase = getSupabaseServerClient();
 
-  // Find high-scoring insights, then figure out which ones don't have
-  // drafts yet (kept simple/explicit for the MVP rather than a fancy join).
   const { data: strongInsights, error: insightsError } = await supabase
     .from('insights')
     .select('id, title, explanation, topic')
@@ -101,7 +99,8 @@ export async function GET(request) {
 
     let parsed;
     try {
-      parsed = JSON.parse(rawText);
+      const cleaned = rawText.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(cleaned);
     } catch {
       return Response.json(
         { error: 'Claude returned non-JSON output', raw: rawText.slice(0, 500), insightTitle: insight.title },
