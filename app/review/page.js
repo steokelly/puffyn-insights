@@ -1,5 +1,5 @@
 import { getSupabaseServerClient } from '../../lib/supabase';
-import { approveDraft, rejectDraft } from './actions';
+import { approveDraft, rejectDraft, editDraft, regenerateDraft } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +35,29 @@ export default async function ReviewPage() {
           <p style={styles.source}>
             From insight: {draft.insights?.title} (score {draft.insights?.puffyn_score})
           </p>
+
+          <form action={editDraft} style={styles.editForm}>
+            <input type="hidden" name="id" value={draft.id} />
+            <textarea name="content" defaultValue={draft.content} style={styles.textarea} rows={3} />
+            <button type="submit" style={styles.saveButton}>
+              Save edit
+            </button>
+          </form>
+
+          <form action={regenerateDraft} style={styles.regenerateForm}>
+            <input type="hidden" name="id" value={draft.id} />
+            <select name="style" style={styles.select} defaultValue="different_angle">
+              <option value="shorter">Shorter</option>
+              <option value="more_thoughtful">More thoughtful</option>
+              <option value="more_provocative">More provocative</option>
+              <option value="more_neutral">More neutral</option>
+              <option value="different_angle">Different angle</option>
+            </select>
+            <button type="submit" style={styles.regenerateButton}>
+              Regenerate
+            </button>
+          </form>
+
           <div style={styles.actions}>
             <form action={approveDraft}>
               <input type="hidden" name="id" value={draft.id} />
@@ -94,6 +117,46 @@ const styles = {
   formatLabel: { fontSize: '0.8rem', color: '#64748b' },
   content: { fontSize: '1.05rem', lineHeight: 1.5, marginBottom: '0.75rem' },
   source: { fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1rem' },
+  editForm: { marginBottom: '0.75rem' },
+  textarea: {
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '0.5rem',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e1',
+    fontFamily: 'inherit',
+    fontSize: '0.9rem',
+    marginBottom: '0.4rem',
+  },
+  saveButton: {
+    background: '#e2e8f0',
+    color: '#1e293b',
+    border: 'none',
+    padding: '0.4rem 0.8rem',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+  },
+  regenerateForm: {
+    display: 'flex',
+    gap: '0.5rem',
+    marginBottom: '0.75rem',
+  },
+  select: {
+    padding: '0.4rem',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e1',
+    fontSize: '0.85rem',
+  },
+  regenerateButton: {
+    background: '#7c3aed',
+    color: 'white',
+    border: 'none',
+    padding: '0.4rem 0.8rem',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+  },
   actions: { display: 'flex', gap: '0.5rem' },
   approveButton: {
     background: '#16a34a',
