@@ -88,7 +88,8 @@ export async function regenerateDraft(formData) {
   const rawText = textBlock?.text || '';
 
   try {
-    const parsed = JSON.parse(rawText);
+    const cleaned = rawText.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
     if (parsed.content) {
       await supabase.from('content_drafts').update({ content: parsed.content }).eq('id', id);
     } else {
