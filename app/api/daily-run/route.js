@@ -196,7 +196,8 @@ async function analyzeOne(supabase) {
 
   let parsed;
   try {
-    parsed = JSON.parse(rawText);
+    const cleaned = rawText.replace(/```json|```/g, '').trim();
+    parsed = JSON.parse(cleaned);
   } catch {
     await supabase.from('episodes').update({ transcript_status: 'analysis_error' }).eq('id', episode.id);
     return { title: episode.title, status: 'error', reason: 'non-JSON response' };
