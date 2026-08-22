@@ -1,11 +1,11 @@
 import { getSupabaseServerClient } from '../../../lib/supabase';
-import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS } from '../../../lib/contentPrompts';
+import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS, enforceLimit } from '../../../lib/contentPrompts';
 
 export const maxDuration = 60;
 
 // Only insights scoring 85+ get content drafted — per the brief's thresholds,
 // this is the "develop into potential content" tier.
-const CONTENT_THRESHOLD = 70;
+const CONTENT_THRESHOLD = 85;
 
 async function draftForPlatform(insight, platform, source) {
   const suffix = buildAttributionSuffix(platform, source);
@@ -44,7 +44,7 @@ async function draftForPlatform(insight, platform, source) {
   return {
     platform,
     format: parsed.format || 'observation',
-    content: (parsed.content || '').trim() + suffix,
+    content: enforceLimit((parsed.content || '').trim(), suffix, PLATFORM_LIMITS[platform]),
   };
 }
 
