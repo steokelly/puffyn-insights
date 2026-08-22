@@ -12,9 +12,9 @@ const PODCAST_NAME = 'Inside Politics (Irish Times)';
 // so a backlog (e.g. after a few missed days) can't make a single run huge.
 const MAX_PER_STEP = 5;
 
-// Only insights scoring 85+ get content drafted — per the brief's thresholds,
+// Only insights scoring 70+ get content drafted — per the brief's thresholds,
 // this is the "develop into potential content" tier.
-const CONTENT_THRESHOLD = 85;
+const CONTENT_THRESHOLD = 70;
 
 const PUFFYN_SYSTEM_PROMPT = `You are the Puffyn Research Editor, analysing a podcast transcript to find genuinely interesting, well-evidenced ideas — not to summarise the episode.
 
