@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getSupabaseServerClient } from '../../lib/supabase';
+import { REGENERATE_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS } from '../../lib/contentPrompts';
 
 export async function approveDraft(formData) {
   const id = formData.get('id');
@@ -33,12 +34,6 @@ const REGENERATE_INSTRUCTIONS = {
   different_angle: 'Take a genuinely different angle on the same underlying insight, not just reworded.',
 };
 
-const REGENERATE_SYSTEM_PROMPT = `You write short-form social content for Puffyn, a media brand for the open-minded covering Ireland, culture, politics, and society. Puffyn's voice: curious, intelligent, progressive, open-minded, thoughtful, accessible, willing to challenge conventional thinking, distinctly human. Never generic-AI-sounding, never rage-baiting, never overstating evidence, never emoji-heavy.
-
-You'll be given an existing draft post, the insight it came from, and an instruction for how to revise it. Rewrite it accordingly. Keep it appropriate for the same platform (X posts must stay under 280 characters; Bluesky can be a little longer).
-
-Respond with ONLY valid JSON, no other text: { "content": "..." }`;
-
 export async function regenerateDraft(formData) {
   const id = formData.get('id');
   const style = formData.get('style');
@@ -46,7 +41,7 @@ export async function regenerateDraft(formData) {
 
   const { data: draft } = await supabase
     .from('content_drafts')
-    .select('*, insights(title, explanation)')
+    .select('*, insights(title, explanation, episodes(podcast_name))')
     .eq('id', id)
     .maybeSingle();
 
@@ -55,6 +50,14 @@ export async function regenerateDraft(formData) {
     return;
   }
 
+  const { data: source } = await supabase
+    .from('podcast_sources')
+    .select('podcast_name, x_handle, bluesky_handle')
+    .eq('podcast_name', draft.insights?.episodes?.podcast_name)
+    .maybeSingle();
+
+  const suffix = buildAttributionSuffix(draft.platform, source);
+  const maxChars = PLATFORM_LIMITS[draft.platform] - suffix.length;
   const instruction = REGENERATE_INSTRUCTIONS[style] || REGENERATE_INSTRUCTIONS.different_angle;
 
   const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -71,7 +74,7 @@ export async function regenerateDraft(formData) {
       messages: [
         {
           role: 'user',
-          content: `Platform: ${draft.platform}\n\nInsight: ${draft.insights?.title}\n${draft.insights?.explanation}\n\nCurrent draft: ${draft.content}\n\nInstruction: ${instruction}`,
+          content: `Platform: ${draft.platform}\n\nInsight: ${draft.insights?.title}\n${draft.insights?.explanation}\n\nCurrent draft (source credit already stripped): ${draft.content.replace(suffix, '')}\n\nInstruction: ${instruction}\n\nMaximum character count for your text (before the source credit is re-added): ${maxChars}`,
         },
       ],
     }),
@@ -91,7 +94,10 @@ export async function regenerateDraft(formData) {
     const cleaned = rawText.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
     if (parsed.content) {
-      await supabase.from('content_drafts').update({ content: parsed.content }).eq('id', id);
+      await supabase
+        .from('content_drafts')
+        .update({ content: parsed.content.trim() + suffix })
+        .eq('id', id);
     } else {
       console.error('regenerateDraft: parsed JSON had no content field', rawText);
     }
