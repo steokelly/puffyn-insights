@@ -1,7 +1,8 @@
 import { XMLParser } from 'fast-xml-parser';
 import { getSupabaseServerClient } from '../../../lib/supabase';
+import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS } from '../../../lib/contentPrompts';
 
-// Give this extra time since it does three jobs in one run.
+// Give this extra time since it does four jobs in one run.
 export const maxDuration = 300;
 
 const APPLE_PODCAST_ID = '794389685';
@@ -14,25 +15,6 @@ const MAX_PER_STEP = 5;
 // Only insights scoring 85+ get content drafted — per the brief's thresholds,
 // this is the "develop into potential content" tier.
 const CONTENT_THRESHOLD = 85;
-
-const CONTENT_SYSTEM_PROMPT = `You write short-form social content for Puffyn, a media brand for the open-minded covering Ireland, culture, politics, and society. Puffyn's voice: curious, intelligent, progressive, open-minded, thoughtful, accessible, willing to challenge conventional thinking, distinctly human. Never generic-AI-sounding, never rage-baiting, never overstating evidence, never emoji-heavy.
-
-You'll be given one research insight. Draft short-form posts inspired by it — never reproduce source material verbatim, never fabricate quotes or statistics beyond what's given.
-
-Choose 1-2 of these formats, whichever suits the insight best (don't force all of them):
-- Observation: a concise interesting thought
-- Question: an intelligent conversation starter
-- Puffyn Take: an original interpretation
-
-Write separate copy for X (concise, under 280 characters) and Bluesky (can be slightly longer and more conversational) — don't just duplicate the same text on both.
-
-Respond with ONLY valid JSON, no other text:
-{
-  "drafts": [
-    { "platform": "x", "format": "observation", "content": "..." },
-    { "platform": "bluesky", "format": "observation", "content": "..." }
-  ]
-}`;
 
 const PUFFYN_SYSTEM_PROMPT = `You are the Puffyn Research Editor, analysing a podcast transcript to find genuinely interesting, well-evidenced ideas — not to summarise the episode.
 
@@ -249,10 +231,51 @@ async function analyzeOne(supabase) {
   return { title: episode.title, status: 'analyzed', insightsFound: insights.length };
 }
 
+async function draftForPlatform(insight, platform, source) {
+  const suffix = buildAttributionSuffix(platform, source);
+  const maxChars = PLATFORM_LIMITS[platform] - suffix.length;
+
+  const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 512,
+      system: CONTENT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Insight: ${insight.title}\n\nExplanation: ${insight.explanation}\n\nTopic: ${insight.topic}\n\nPlatform: ${platform}\n\nMaximum character count for your text (before the source credit is added): ${maxChars}`,
+        },
+      ],
+    }),
+  });
+
+  if (!claudeRes.ok) {
+    throw new Error(`Claude ${claudeRes.status}`);
+  }
+
+  const claudeData = await claudeRes.json();
+  const textBlock = claudeData?.content?.find((block) => block.type === 'text');
+  const rawText = textBlock?.text || '';
+  const cleaned = rawText.replace(/```json|```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+
+  return {
+    platform,
+    format: parsed.format || 'observation',
+    content: (parsed.content || '').trim() + suffix,
+  };
+}
+
 async function generateContentOne(supabase) {
   const { data: strongInsights } = await supabase
     .from('insights')
-    .select('id, title, explanation, topic')
+    .select('id, title, explanation, topic, episodes(podcast_name)')
     .gte('puffyn_score', CONTENT_THRESHOLD)
     .order('puffyn_score', { ascending: false });
 
@@ -264,53 +287,29 @@ async function generateContentOne(supabase) {
 
   if (!insight) return null;
 
-  const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      max_tokens: 1024,
-      system: CONTENT_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `Insight: ${insight.title}\n\nExplanation: ${insight.explanation}\n\nTopic: ${insight.topic}`,
-        },
-      ],
-    }),
-  });
+  const { data: source } = await supabase
+    .from('podcast_sources')
+    .select('podcast_name, x_handle, bluesky_handle')
+    .eq('podcast_name', insight.episodes?.podcast_name)
+    .maybeSingle();
 
-  if (!claudeRes.ok) {
-    return { insightTitle: insight.title, status: 'error', reason: `Claude ${claudeRes.status}` };
+  const drafts = [];
+  for (const platform of ['x', 'bluesky']) {
+    try {
+      const draft = await draftForPlatform(insight, platform, source);
+      await supabase.from('content_drafts').insert({
+        insight_id: insight.id,
+        platform: draft.platform,
+        format: draft.format,
+        content: draft.content,
+      });
+      drafts.push(draft.platform);
+    } catch (err) {
+      drafts.push(`${platform} error: ${String(err)}`);
+    }
   }
 
-  const claudeData = await claudeRes.json();
-  const textBlock = claudeData?.content?.find((block) => block.type === 'text');
-  const rawText = textBlock?.text || '';
-
-  let parsed;
-  try {
-    const cleaned = rawText.replace(/```json|```/g, '').trim();
-    parsed = JSON.parse(cleaned);
-  } catch {
-    return { insightTitle: insight.title, status: 'error', reason: 'non-JSON response' };
-  }
-
-  const drafts = parsed.drafts || [];
-  for (const draft of drafts) {
-    await supabase.from('content_drafts').insert({
-      insight_id: insight.id,
-      platform: draft.platform,
-      format: draft.format,
-      content: draft.content,
-    });
-  }
-
-  return { insightTitle: insight.title, status: 'drafted', draftsCreated: drafts.length };
+  return { insightTitle: insight.title, status: 'drafted', drafted: drafts };
 }
 
 export async function GET(request) {
