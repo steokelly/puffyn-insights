@@ -1,4 +1,5 @@
 import { getSupabaseServerClient } from '../../../lib/supabase';
+import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS } from '../../../lib/contentPrompts';
 
 export const maxDuration = 60;
 
@@ -6,24 +7,46 @@ export const maxDuration = 60;
 // this is the "develop into potential content" tier.
 const CONTENT_THRESHOLD = 85;
 
-const CONTENT_SYSTEM_PROMPT = `You write short-form social content for Puffyn, a media brand for the open-minded covering Ireland, culture, politics, and society. Puffyn's voice: curious, intelligent, progressive, open-minded, thoughtful, accessible, willing to challenge conventional thinking, distinctly human. Never generic-AI-sounding, never rage-baiting, never overstating evidence, never emoji-heavy.
+async function draftForPlatform(insight, platform, source) {
+  const suffix = buildAttributionSuffix(platform, source);
+  const maxChars = PLATFORM_LIMITS[platform] - suffix.length;
 
-You'll be given one research insight. Draft short-form posts inspired by it — never reproduce source material verbatim, never fabricate quotes or statistics beyond what's given.
+  const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 512,
+      system: CONTENT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Insight: ${insight.title}\n\nExplanation: ${insight.explanation}\n\nTopic: ${insight.topic}\n\nPlatform: ${platform}\n\nMaximum character count for your text (before the source credit is added): ${maxChars}`,
+        },
+      ],
+    }),
+  });
 
-Choose 1-2 of these formats, whichever suits the insight best (don't force all of them):
-- Observation: a concise interesting thought
-- Question: an intelligent conversation starter
-- Puffyn Take: an original interpretation
+  if (!claudeRes.ok) {
+    throw new Error(`Claude ${claudeRes.status}`);
+  }
 
-Write separate copy for X (concise, under 280 characters) and Bluesky (can be slightly longer and more conversational) — don't just duplicate the same text on both.
+  const claudeData = await claudeRes.json();
+  const textBlock = claudeData?.content?.find((block) => block.type === 'text');
+  const rawText = textBlock?.text || '';
+  const cleaned = rawText.replace(/```json|```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
 
-Respond with ONLY valid JSON, no other text:
-{
-  "drafts": [
-    { "platform": "x", "format": "observation", "content": "..." },
-    { "platform": "bluesky", "format": "observation", "content": "..." }
-  ]
-}`;
+  return {
+    platform,
+    format: parsed.format || 'observation',
+    content: (parsed.content || '').trim() + suffix,
+  };
+}
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -43,7 +66,7 @@ export async function GET(request) {
 
   const { data: strongInsights, error: insightsError } = await supabase
     .from('insights')
-    .select('id, title, explanation, topic')
+    .select('id, title, explanation, topic, episodes(podcast_name)')
     .gte('puffyn_score', CONTENT_THRESHOLD)
     .order('puffyn_score', { ascending: false });
 
@@ -57,74 +80,33 @@ export async function GET(request) {
 
   const { data: existingDrafts } = await supabase.from('content_drafts').select('insight_id');
   const alreadyDrafted = new Set((existingDrafts || []).map((d) => d.insight_id));
-
   const insight = strongInsights.find((i) => !alreadyDrafted.has(i.id));
 
   if (!insight) {
     return Response.json({ message: 'All high-scoring insights already have drafts.' });
   }
 
-  try {
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 1024,
-        system: CONTENT_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: `Insight: ${insight.title}\n\nExplanation: ${insight.explanation}\n\nTopic: ${insight.topic}`,
-          },
-        ],
-      }),
-    });
+  const { data: source } = await supabase
+    .from('podcast_sources')
+    .select('podcast_name, x_handle, bluesky_handle')
+    .eq('podcast_name', insight.episodes?.podcast_name)
+    .maybeSingle();
 
-    if (!claudeRes.ok) {
-      const errorBody = await claudeRes.text();
-      return Response.json(
-        { error: 'Claude request failed', status: claudeRes.status, detail: errorBody, insightTitle: insight.title },
-        { status: 502 }
-      );
-    }
-
-    const claudeData = await claudeRes.json();
-    const textBlock = claudeData?.content?.find((block) => block.type === 'text');
-    const rawText = textBlock?.text || '';
-
-    let parsed;
+  const drafts = [];
+  for (const platform of ['x', 'bluesky']) {
     try {
-      const cleaned = rawText.replace(/```json|```/g, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      return Response.json(
-        { error: 'Claude returned non-JSON output', raw: rawText.slice(0, 500), insightTitle: insight.title },
-        { status: 502 }
-      );
-    }
-
-    const drafts = parsed.drafts || [];
-
-    for (const draft of drafts) {
+      const draft = await draftForPlatform(insight, platform, source);
       await supabase.from('content_drafts').insert({
         insight_id: insight.id,
         platform: draft.platform,
         format: draft.format,
         content: draft.content,
       });
+      drafts.push(draft);
+    } catch (err) {
+      drafts.push({ platform, status: 'error', reason: String(err) });
     }
-
-    return Response.json({
-      insightTitle: insight.title,
-      draftsCreated: drafts.length,
-      drafts,
-    });
-  } catch (err) {
-    return Response.json({ error: 'Unexpected failure', detail: String(err), insightTitle: insight.title }, { status: 500 });
   }
+
+  return Response.json({ insightTitle: insight.title, draftsCreated: drafts.length, drafts });
 }
