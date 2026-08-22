@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { getSupabaseServerClient } from '../../../lib/supabase';
-import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS } from '../../../lib/contentPrompts';
+import { CONTENT_SYSTEM_PROMPT, buildAttributionSuffix, PLATFORM_LIMITS, enforceLimit } from '../../../lib/contentPrompts';
 
 // Give this extra time since it does four jobs in one run.
 export const maxDuration = 300;
@@ -268,7 +268,7 @@ async function draftForPlatform(insight, platform, source) {
   return {
     platform,
     format: parsed.format || 'observation',
-    content: (parsed.content || '').trim() + suffix,
+    content: enforceLimit((parsed.content || '').trim(), suffix, PLATFORM_LIMITS[platform]),
   };
 }
 
